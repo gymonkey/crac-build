@@ -1,0 +1,40 @@
+FROM ubuntu:22.04
+WORKDIR /home/app
+# Add required libraries
+RUN apt-get update && apt-get install -y \
+        curl \
+        jq \
+        libnl-3-200 \
+    && rm -rf /var/lib/apt/lists/*
+# Install latest CRaC OpenJDK
+RUN release_id=$(curl -s "https://api.azul.com/metadata/v1/zulu/packages/?java_version=17&os=linux-glibc&arch=amd64&crac_supported=true&java_package_type=jdk&latest=true&release_status=ga&certifications=tck&archive_type=tar.gz&page=1&page_size=100" -H "accept: application/json" | jq -r '.[0] | .package_uuid') \
+    && if [ "$release_id" = "null" ]; then \
+           echo "No CRaC OpenJDK found for Java version 17 and architecture amd64"; \
+           exit 1; \
+       fi \
+    && details=$(curl -s "https://api.azul.com/metadata/v1/zulu/packages/$release_id" -H "accept: application/json") \
+    && name=$(echo "$details" | jq -r '.name') \
+    && url=$(echo "$details" | jq -r '.download_url') \
+    && hash=$(echo "$details" | jq -r '.sha256_hash') \
+    && echo "Downloading $name from $url" \
+    && curl -LJOH 'Accept: application/octet-stream' "$url" >&2 \
+    && file_sha=$(sha256sum -b "$name" | cut -d' ' -f 1) \
+    && if [ "$file_sha" != "$hash" ]; then \
+           echo "SHA256 hash mismatch: $file_sha != $hash"; \
+           exit 1; \
+       fi \
+    && echo "SHA256 hash matches: $file_sha == $hash" \
+    && tar xzf "$name" \
+    && mv ${name%%.tar.gz} /azul-crac-jdk \
+    && rm "$name"
+# Copy layers
+WORKDIR /home/app
+#COPY --link layers/libs /home/app/libs
+COPY graalvm-demo/target/java-worker-demo-0.0.1-SNAPSHOT.jar  java-worker-demo-0.0.1-SNAPSHOT.jar
+#COPY --link layers/app /home/app/
+#COPY --link layers/resources /home/app/resources
+# Add build scripts
+RUN chmod 777 /dev/null
+COPY  scripts/run.sh /home/app/run.sh
+COPY  checkout2/ cr/
+ENTRYPOINT ["/home/app/run.sh"]
